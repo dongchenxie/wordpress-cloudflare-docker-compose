@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  wordpress:
+    build:
+      context: .
+      dockerfile: php/Dockerfile
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: ${WP_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WP_DB_PASSWORD}
+      WORDPRESS_DB_NAME: ${WP_DB_NAME}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_ENVIRONMENT_TYPE', 'production');
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '512M');
+        define('DISALLOW_FILE_EDIT', true);
+        define('WP_CACHE', true);
+        define('DISABLE_WP_CRON', true); // we'll run real cron
+        // Redis
+        define('WP_REDIS_HOST', 'redis');
+        define('WP_REDIS_PORT', 6379);
+        define('WP_REDIS_DATABASE', 0);
+        define('WP_REDIS_MAXTTL', 43200);
+    volumes:
+      - ./html:/var/www/html
+      - ./php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+      - ./php/opcache.ini:/usr/local/etc/php/conf.d/opcache.ini
+      - ./php/www.conf:/usr/local/etc/php-fpm.d/www.conf
+    depends_on:
+      - db
+      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "php -v >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - wordpress
+    ports:
+      - "7966:80"    # Cloudflare Tunnel will connect here
+    volumes:
+      - ./html:/var/www/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/conf.d/wordpress.conf:/etc/nginx/conf.d/wordpress.conf:ro
+      - ./nginx/conf.d/cloudflare-realip.conf:/etc/nginx/conf.d/cloudflare-realip.conf:ro
+      - ./nginx_cache:/var/cache/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  db:
+    image: mysql:8.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${WP_DB_NAME}
+      MYSQL_USER: ${WP_DB_USER}
+      MYSQL_PASSWORD: ${WP_DB_PASSWORD}
+    volumes:
+      - ./db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p${DB_ROOT_PASSWORD} || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  phpmyadmin:
+    image: phpmyadmin:5.2.1-apache
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+    ports:
+      - "127.0.0.1:4448:80"    # expose locally; tunnel separately if needed
+    depends_on:
+      - db
+    restart: always
+
+  wpcli:
+    build:
+      context: .
+      dockerfile: php/Dockerfile.cli
+    user: "33:33"
+    working_dir: /var/www/html
+    volumes:
+      - ./html:/var/www/html
+    entrypoint: [ "bash", "-lc" ]
+    command: >
+      "wp core is-installed || exit 0"
+    depends_on:
+      - wordpress
+    restart: "no"
+
+volumes:
+  db_data:
+  nginx_cache:

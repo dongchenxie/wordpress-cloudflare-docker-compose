@@ -1,0 +1,4 @@
+FROM wordpress:cli
+USER root
+RUN /sbin/apk add --update --no-cache autoconf gcc make build-base pkgconf && pecl install redis && docker-php-ext-enable redis
+USER www-data
