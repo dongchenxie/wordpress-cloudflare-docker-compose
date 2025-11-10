@@ -42,7 +42,7 @@ services:
     depends_on:
       - wordpress
     ports:
-      - "7966:80"    # Cloudflare Tunnel will connect here
+      - "7968:80"    # Cloudflare Tunnel will connect here
     volumes:
       - ./html:/var/www/html:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -51,7 +51,8 @@ services:
       - ./nginx/conf.d/cloudflare-realip.conf:/etc/nginx/conf.d/cloudflare-realip.conf:ro
       - ./nginx_cache:/var/cache/nginx
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/healthz || exit 1"]
+      # Force IPv4 to avoid localhost resolving to IPv6 (::1) where nginx is not listening
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -93,7 +94,7 @@ services:
       PMA_HOST: db
       PMA_PORT: 3306
     ports:
-      - "127.0.0.1:4448:80"    # expose locally; tunnel separately if needed
+      - "127.0.0.1:4441:80"    # expose locally; tunnel separately if needed
     depends_on:
       - db
     restart: always
